@@ -1,0 +1,7 @@
+pywin32
+pandas
+numpy
+scikit-learn
+matplotlib
+openpyxl
+joblib
