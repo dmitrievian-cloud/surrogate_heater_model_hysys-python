@@ -14,6 +14,13 @@ answers new queries in milliseconds instead of seconds — enabling
 optimization, Monte Carlo analysis, and real-time operator advisory tools
 that would be impractical running the full simulator thousands of times.
 
+## HYSYS model
+
+The source simulation case is in `hysys_case/heater_case.hsc` (Aspen HYSYS).
+A simple Heater block (E-100) with a water stream (Water In → Water Out)
+and its energy stream (Q-100) — the model `heater_01_generate_dataset.py`
+drives via COM automation.
+
 ## Pipeline
 
 1. **`src/heater_01_generate_dataset.py`** — connects to a running HYSYS
