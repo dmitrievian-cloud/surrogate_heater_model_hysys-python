@@ -42,7 +42,10 @@ confounded by feature engineering.
 | Gaussian Process (raw Q) | 2,850 | 59,500 |
 | Gradient Boosting (q + phys) | 1,730 | 4,100 |
 | Physical linear (q + phys) | 6.6 | 25.5 |
-| **Enthalpy GP** (deployed) | **5.1** | **7.0** |
+| Quadratic polynomial (q + phys) | **4.6** | 14.3 |
+| RBF, thin-plate (q + phys) | 6.4 | 48.7 |
+| Small neural net 16-16 (q + phys) | 400 | 2,805 |
+| **Enthalpy GP** (deployed) | 5.1 | **7.0** |
 | Hybrid: linear + GP on residuals | 6.2 | not tested |
 
 ¹ single 5-fold CV (R² = 0.71); the other rows are medians over 10 repeats.
@@ -75,7 +78,10 @@ of the range and tested on the rest. Test MAE, kJ/h:
 | GP (raw Q) | 17,100 | 5,700 | 59,500 |
 | Boosting (q + phys) | 2,800 | 4,100 | 2,000 |
 | Physical linear (q + phys) | 7.7 | 6.7 | 25.5 |
-| **Enthalpy GP** | **5.8** | **5.4** | **7.0** |
+| Quadratic polynomial (q + phys) | **5.0** | **4.8** | 14.3 |
+| RBF, thin-plate (q + phys) | 7.2 | 6.4 | 48.7 |
+| Small neural net 16-16 (q + phys) | 651 | 2,805 | 2,700 |
+| Enthalpy GP | 5.8 | 5.4 | **7.0** |
 | Enthalpy GP + kink feature | 5.8 | 5.4 | 7.0 |
 
 ![Extrapolation test](figures/extrapolation_test.png)
@@ -86,9 +92,19 @@ of the range and tested on the rest. Test MAE, kJ/h:
   19,400 and 8,300 kJ/h on the Flow and T_in splits.
 - The `max(0, T_out−100)` kink feature gave no gain for the GP (identical to
   3 digits); it stays an optional parameter (`use_kink`), off by default.
-- The GP is kept as the deployed model because it is the most accurate on the
-  hardest split and provides σ, but the physical linear model is a legitimate,
-  simpler alternative.
+- Once q and the phase flag are used, **simple models are as good as the GP**:
+  a quadratic polynomial is the most accurate in interpolation (4.6 kJ/h) and
+  on two of three range splits (it likely captures the slight curvature of
+  cp(T)), the GP is best on the T_out split (7.0 vs 14.3 kJ/h) and RBF with a
+  linear tail stays in the same range (6–49 kJ/h). The small neural net is
+  the exception: 400 kJ/h in CV and 650–2,800 kJ/h when extrapolating,
+  roughly a hundred times worse than the polynomial or more (presumably
+  because a tanh network saturates outside the training data; not
+  investigated further).
+- The GP is kept as the deployed model only because it provides σ and the best
+  worst-case extrapolation; the polynomial has no uncertainty estimate. If σ
+  is not needed, a quadratic polynomial on q with the phase flag is the
+  simplest accurate choice.
 
 ### Uncertainty
 
@@ -141,6 +157,10 @@ of the range and tested on the rest. Test MAE, kJ/h:
    pessimistic, the hybrid's is close to the real error but does not grow
    outside. Calibrate σ against actual errors, and keep an explicit range
    check next to it.
+8. **Simple models win once the structure is right.** With q = Q/Flow and the
+   phase flag, a quadratic polynomial matched or beat a Gaussian Process, and
+   a neural network was 100× worse. Try the simplest model that respects the
+   physics before reaching for a flexible one.
 
 ## Pipeline
 
@@ -164,9 +184,9 @@ of the range and tested on the rest. Test MAE, kJ/h:
    maximum reachable T_out for a given flow (it reports when the limit falls
    short of the latent heat at 100 °C).
 7. **`src/heater_07_extrapolation.py`** — trains on part of each input range
-   and tests on the rest, for 7 models on equal footing.
+   and tests on the rest, for 10 models on equal footing.
 8. **`src/heater_08_compare_models.py`** — 10 × repeated 5-fold CV with
-   boxplots for six approaches (including the hybrid) and the uncertainty
+   boxplots for nine approaches (including the hybrid) and the uncertainty
    plot. `--plots-only` redraws only the uncertainty plot.
 
 ### Using the surrogate from your own code
@@ -240,7 +260,5 @@ python src/heater_08_compare_models.py     # several minutes (repeated CV with G
 - Improve the experimental design (DoE): add points around 100 °C and in the
   corners of the domain, compare LHS against adaptive sampling (needs HYSYS
   and changes to `heater_01`).
-- Extra models for comparison: RBF, a small neural network, a quadratic
-  polynomial.
 - Multi-variable optimization (e.g. cost of Q vs throughput) with
   `scipy.optimize.minimize`; the current script solves 1-D problems only.

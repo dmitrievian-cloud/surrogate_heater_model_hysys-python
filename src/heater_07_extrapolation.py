@@ -28,7 +28,11 @@ from sklearn.base import BaseEstimator, RegressorMixin, clone
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
+from scipy.interpolate import RBFInterpolator
+from sklearn.compose import TransformedTargetRegressor
 from sklearn.linear_model import LinearRegression
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import PolynomialFeatures
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
@@ -64,6 +68,35 @@ class SpecificModel(BaseEstimator, RegressorMixin):
         return self.base_.predict(self._design(X)) * X[:, 1]
 
 
+class RBFModel(BaseEstimator, RegressorMixin):
+    """RBF-интерполяция (thin-plate spline + линейный хвост => экстраполирует линейно) на стандартизованных признаках."""
+
+    def __init__(self, smoothing=1e-3):
+        self.smoothing = smoothing
+
+    def fit(self, X, y):
+        self.scaler_ = StandardScaler().fit(X)
+        self.rbf_ = RBFInterpolator(self.scaler_.transform(X), np.asarray(y, dtype=float),
+                                    kernel="thin_plate_spline", degree=1, smoothing=self.smoothing)
+        return self
+
+    def predict(self, X):
+        return self.rbf_(self.scaler_.transform(X))
+
+
+def small_nn():
+    """Малая нейросеть 16-16 (tanh), входы и цель стандартизуются."""
+    mlp = make_pipeline(StandardScaler(), MLPRegressor(
+        hidden_layer_sizes=(16, 16), activation="tanh", solver="lbfgs",
+        max_iter=5000, random_state=RANDOM_STATE))
+    return TransformedTargetRegressor(regressor=mlp, transformer=StandardScaler())
+
+
+def quad_poly():
+    """Квадратичный полином (полная степень 2) на стандартизованных признаках."""
+    return make_pipeline(StandardScaler(), PolynomialFeatures(2), LinearRegression())
+
+
 def plain_gp():
     kernel = ConstantKernel(1.0) * Matern(length_scale=[1.0] * 3, nu=2.5) + WhiteKernel(1e-3)
     return make_pipeline(StandardScaler(), GaussianProcessRegressor(
@@ -81,6 +114,9 @@ MODELS = {
     "GP (raw Q)":                lambda: plain_gp(),
     "Boosting (q + phys)":       lambda: SpecificModel(gb()),
     "Phys. linear (q + phys)":   lambda: SpecificModel(LinearRegression()),
+    "Quad. poly (q + phys)":     lambda: SpecificModel(quad_poly()),
+    "RBF (q + phys)":            lambda: SpecificModel(RBFModel()),
+    "Small NN (q + phys)":       lambda: SpecificModel(small_nn()),
     "Enthalpy GP":               lambda: EnthalpyGP(random_state=RANDOM_STATE),
     "Enthalpy GP + kink":        lambda: EnthalpyGP(use_kink=True, random_state=RANDOM_STATE),
 }
@@ -133,7 +169,7 @@ if __name__ == "__main__":
     for j, (split_name, (col, _)) in enumerate(SPLITS.items()):
         ax = axes[0, j]
         r = res[res.split == split_name]
-        ax.barh(r.model, r.MAE, color=["#999"] * 3 + ["#7aa6d6"] * 2 + ["#2a8f3c"] * 2)
+        ax.barh(r.model, r.MAE, color=["#999" if "raw" in m else "#2a8f3c" if "Enthalpy" in m else "#7aa6d6" for m in r.model])
         ax.set_xscale("log")
         ax.invert_yaxis()
         ax.set_title(split_name)

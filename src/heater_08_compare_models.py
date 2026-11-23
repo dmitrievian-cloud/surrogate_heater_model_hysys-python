@@ -37,7 +37,8 @@ from sklearn.model_selection import RepeatedKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from heater_07_extrapolation import SpecificModel, gb, plain_gp
+from heater_07_extrapolation import (RBFModel, SpecificModel, gb, plain_gp,
+                                     quad_poly, small_nn)
 from surrogate_model import EnthalpyGP, FEATURE_COLS, TARGET_COL, ROOT, get_domain
 
 warnings.filterwarnings("ignore")
@@ -81,6 +82,9 @@ MODELS = {
     "GP (raw Q)":                  lambda: plain_gp(),
     "Boosting (q + phys)":         lambda: SpecificModel(gb()),
     "Phys. linear (q + phys)":     lambda: SpecificModel(LinearRegression()),
+    "Quad. poly (q + phys)":       lambda: SpecificModel(quad_poly()),
+    "RBF (q + phys)":              lambda: SpecificModel(RBFModel()),
+    "Small NN (q + phys)":         lambda: SpecificModel(small_nn()),
     "Enthalpy GP":                 lambda: EnthalpyGP(random_state=RANDOM_STATE),
     "Hybrid: linear + GP(resid)":  lambda: HybridModel(),
 }
@@ -111,7 +115,7 @@ if __name__ == "__main__":
             m = np.array(r["MAE"])
             print(f"{name:30s} {np.median(m):12.1f} {m.min():10.1f} .. {m.max():9.1f} {np.median(r['R2']):11.5f}")
 
-        fig, ax = plt.subplots(figsize=(10, 5.5))
+        fig, ax = plt.subplots(figsize=(10, 6.5))
         ax.boxplot([results[n]["MAE"] for n in MODELS], orientation="horizontal", tick_labels=list(MODELS))
         ax.set_xscale("log")
         ax.invert_yaxis()
