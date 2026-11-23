@@ -62,6 +62,8 @@ bundle = {
     "feature_cols": FEATURE_COLS,
     "target_col": TARGET_COL,
     "t_sat_c": T_SAT_C,
+    # диапазоны обучения: по ним predict_Q предупреждает о выходе за домен
+    "domain": {c: (float(df[c].min()), float(df[c].max())) for c in FEATURE_COLS},
 }
 MODEL_FILE.parent.mkdir(exist_ok=True)
 joblib.dump(bundle, MODEL_FILE)

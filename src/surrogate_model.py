@@ -17,6 +17,7 @@
 При другом давлении её нужно пересчитать и переобучить модель.
 """
 
+import warnings
 from pathlib import Path
 
 import joblib
@@ -77,9 +78,34 @@ def load_model(model_file=MODEL_FILE):
     return _BUNDLE["model"]
 
 
+def get_domain():
+    """Диапазоны обучения {имя признака: (min, max)} или None, если модель их не хранит."""
+    load_model()
+    return _BUNDLE.get("domain")
+
+
+def check_domain(t_in, flow_in, t_out):
+    """Предупреждает (RuntimeWarning), если вход вне диапазона обучения. Возвращает True, если всё в домене."""
+    load_model()
+    domain = _BUNDLE.get("domain")   # {имя признака: (min, max)}, сохраняется в heater_03
+    if not domain:
+        return True
+    ok = True
+    for name, val in zip(FEATURE_COLS, (t_in, flow_in, t_out)):
+        lo, hi = domain[name]
+        if not lo <= val <= hi:
+            ok = False
+            warnings.warn(f"{name}={val:g} вне диапазона обучения [{lo:g}, {hi:g}] — "
+                          f"предсказание ненадёжно", RuntimeWarning, stacklevel=3)
+    return ok
+
+
 def predict_Q(t_in, flow_in, t_out, return_std=False):
-    """Q (kJ/h) по T_in (C), Flow_in (kg/h), T_out (C); опционально ещё и std (kJ/h)."""
+    """Q (kJ/h) по T_in (C), Flow_in (kg/h), T_out (C); опционально ещё и std (kJ/h).
+
+    Если вход вне диапазона обучения, выдаётся RuntimeWarning."""
     model = load_model()
+    check_domain(t_in, flow_in, t_out)
     x = [[t_in, flow_in, t_out]]
     if return_std:
         mu, sd = model.predict(x, return_std=True)

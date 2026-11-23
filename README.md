@@ -42,8 +42,17 @@ drives via COM automation.
    analysis using the saved model (e.g. Q vs T_out across several T_in
    values), no HYSYS required.
 5. **`src/heater_05_use_surrogate_interactive.py`** — interactive console
-   querying of the saved model (enter T_in, Flow_in, T_out, get Q back
+   querying of the saved model (enter T_in, Flow_in, T_out, get Q ± σ back
    instantly).
+6. **`src/heater_06_optimize.py`** — optimization on top of the surrogate
+   (`scipy.optimize.brentq`) under a conservative constraint
+   `Q + 2σ <= Q_max`: maximum flow for a given T_out and heater limit, and
+   maximum reachable T_out for a given flow (it reports when the limit falls
+   short of the latent heat at 100 °C).
+
+`predict_Q` warns (`RuntimeWarning`) when an input is outside the training
+ranges, which are stored in the model file. The sensitivity plot shows a
+±2σ band.
 
 ## Results
 
@@ -108,12 +117,11 @@ python src/heater_03_deploy_model.py
 # afterwards, HYSYS is no longer required:
 python src/heater_04_use_surrogate_batch.py
 python src/heater_05_use_surrogate_interactive.py
+python src/heater_06_optimize.py
 ```
 
 ## Roadmap
 
 - Scale the same pipeline to a more complex unit (FCC).
-- Use the GP's predictive std in the batch plot (confidence band) and as an
-  automatic "out of domain" warning in `predict_Q`.
-- Wrap the surrogate in an optimization loop (e.g. `scipy.optimize`) for
-  real what-if decision support.
+- Multi-variable optimization (e.g. cost of Q vs throughput) with
+  `scipy.optimize.minimize`; the current script solves 1-D problems only.

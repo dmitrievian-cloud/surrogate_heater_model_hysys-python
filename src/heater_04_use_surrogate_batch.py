@@ -49,16 +49,19 @@ def run_interactive():
 # ---------------------------------------------------------------------------
 def run_batch():
     flow_in_fixed = 50.0                    # фиксируем расход
-    t_in_values = [10.0, 20.0, 30.0, 40.0]  # несколько кривых — по одной на T_in
+    t_in_values = [12.0, 20.0, 30.0, 38.0]  # несколько кривых — по одной на T_in
     t_out_range = np.linspace(60, 160, 50)  # развёртка по T_out
 
     plt.figure(figsize=(8, 6))
     for t_in in t_in_values:
-        q_values = [predict_Q(t_in, flow_in_fixed, t_out) for t_out in t_out_range]
-        plt.plot(t_out_range, q_values, marker="", label=f"T_in = {t_in:.0f} C")
+        res = np.array([predict_Q(t_in, flow_in_fixed, t_out, return_std=True) for t_out in t_out_range])
+        q_values, q_std = res[:, 0], res[:, 1]
+        line, = plt.plot(t_out_range, q_values, marker="", label=f"T_in = {t_in:.0f} C")
+        plt.fill_between(t_out_range, q_values - 2 * q_std, q_values + 2 * q_std,
+                         color=line.get_color(), alpha=0.25, linewidth=0)
 
     plt.xlabel("T_out (целевая температура выхода), C")
-    plt.ylabel("Q, kJ/h (предсказание суррогата)")
+    plt.ylabel("Q, kJ/h (предсказание суррогата, полоса = ±2σ)")
     plt.title(f"Сенситивити-анализ: Q vs T_out при Flow_in = {flow_in_fixed:.0f} kg/h\n"
               f"(построено за секунды — без единого запуска HYSYS)")
     plt.legend()
