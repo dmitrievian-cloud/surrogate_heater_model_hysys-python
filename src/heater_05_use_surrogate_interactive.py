@@ -27,15 +27,22 @@ MODE = "INTERACTIVE"   # "INTERACTIVE" или "BATCH"
 # РЕЖИМ A: интерактивный ввод
 # ---------------------------------------------------------------------------
 def run_interactive():
-    print("Интерактивный режим. Для выхода введи 'exit' вместо T_in.\n")
+    print("Интерактивный режим. Для выхода введи 'exit' вместо T_in (или Ctrl-Z).\n")
     while True:
-        t_in_raw = input("T_in (C): ").strip()
+        try:
+            t_in_raw = input("T_in (C): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nВыход.")
+            break
         if t_in_raw.lower() == "exit":
             break
         try:
             t_in = float(t_in_raw)
             flow_in = float(input("Flow_in (kg/h): ").strip())
             t_out = float(input("T_out target (C): ").strip())
+        except (EOFError, KeyboardInterrupt):
+            print("\nВыход.")
+            break
         except ValueError:
             print("  Нужно вводить числа. Попробуй ещё раз.\n")
             continue

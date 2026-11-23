@@ -1,0 +1,8 @@
+# Нормализация окончаний строк
+* text=auto
+
+# Бинарные файлы — не трогаем
+*.xlsx binary
+*.pkl  binary
+*.png  binary
+*.hsc  binary
