@@ -49,7 +49,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import Matern, WhiteKernel, ConstantKernel
 
-from surrogate_model import EnthalpyGP   # GP по q = Q/Flow + флаг фазы (см. surrogate_model.py)
+from surrogate_model import EnthalpyGP, QuadPolyModel   # GP по q = Q/Flow + флаг фазы (см. surrogate_model.py)
 
 # ---------------------------------------------------------------------------
 # НАСТРОЙКИ
@@ -98,6 +98,8 @@ models = {
     ),
     # GP на удельной величине q = Q/Flow + флаг фазы: скачок при кипении уходит в флаг
     "Enthalpy GP": EnthalpyGP(random_state=RANDOM_STATE),
+    # квадратичный полином по q + флаг фазы — РАЗВЁРНУТАЯ модель (см. heater_03)
+    "Quadratic poly (q + phase flag)": QuadPolyModel(random_state=RANDOM_STATE),
 }
 
 results = {}
@@ -132,7 +134,7 @@ for name, model in models.items():
 # ---------------------------------------------------------------------------
 # ШАГ 3. Parity plot на всех точках (out-of-fold)
 # ---------------------------------------------------------------------------
-fig, axes = plt.subplots(2, 2, figsize=(12, 11))
+fig, axes = plt.subplots(2, 3, figsize=(18, 11))
 
 for ax, (name, res) in zip(axes.ravel(), results.items()):
     y_pred = res["y_pred_oof"]
@@ -146,6 +148,8 @@ for ax, (name, res) in zip(axes.ravel(), results.items()):
     ax.legend()
     ax.grid(alpha=0.3)
 
+for ax in axes.ravel()[len(results):]:   # лишние панели сетки прячем
+    ax.axis("off")
 plt.tight_layout()
 OUT_PLOT.parent.mkdir(exist_ok=True)
 plt.savefig(OUT_PLOT, dpi=150)

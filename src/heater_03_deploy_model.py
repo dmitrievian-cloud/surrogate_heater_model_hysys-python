@@ -24,12 +24,10 @@
 import time
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import joblib
-from sklearn.model_selection import KFold
 
-from surrogate_model import (EnthalpyGP, FEATURE_COLS, TARGET_COL, T_SAT_C,
+from surrogate_model import (QuadPolyModel, FEATURE_COLS, TARGET_COL, T_SAT_C,
                              MODEL_FILE, ROOT, predict_Q)
 
 # ---------------------------------------------------------------------------
@@ -49,19 +47,10 @@ print(f"  Точек для обучения: {len(df)}")
 X = df[FEATURE_COLS].values
 y = df[TARGET_COL].values
 
-print("\nОбучаю финальную модель (Enthalpy GP: q = Q/Flow + флаг фазы) на всех данных...")
-model = EnthalpyGP(random_state=RANDOM_STATE)
+print("\nОбучаю финальную модель (квадратичный полином по q = Q/Flow + флаг фазы) на всех данных...")
+model = QuadPolyModel(random_state=RANDOM_STATE)
 model.fit(X, y)
-print("  Готово.")
-
-# Порог доверия по неопределённости: 5-fold out-of-fold sigma/Flow на обучающих данных.
-# Точка считается "доверенной", если sigma/Flow не выше 1.25 x максимума из этих значений.
-sd_q = np.zeros(len(y))
-for tr, te in KFold(5, shuffle=True, random_state=RANDOM_STATE).split(X):
-    _, s = EnthalpyGP(random_state=RANDOM_STATE).fit(X[tr], y[tr]).predict(X[te], return_std=True)
-    sd_q[te] = s / X[te, 1]
-sigma_q_trust = 1.25 * float(sd_q.max())
-print(f"  Порог доверия sigma/Flow: {sigma_q_trust:.3f} kJ/kg (макс. OOF {sd_q.max():.3f})")
+print(f"  Готово. Типичная ошибка (RMSE остатков q в 5-fold CV): {model.sigma_q_:.3f} kJ/kg")
 
 # ---------------------------------------------------------------------------
 # ШАГ 2. Сохранение модели на диск
@@ -73,7 +62,6 @@ bundle = {
     "feature_cols": FEATURE_COLS,
     "target_col": TARGET_COL,
     "t_sat_c": T_SAT_C,
-    "sigma_q_trust": sigma_q_trust,
     # диапазоны обучения: по ним predict_Q предупреждает о выходе за домен
     "domain": {c: (float(df[c].min()), float(df[c].max())) for c in FEATURE_COLS},
 }
@@ -86,7 +74,7 @@ print(f"  Модель сохранена -> {MODEL_FILE}")
 # ШАГ 3. Демонстрация: несколько примеров + сравнение скорости
 # ---------------------------------------------------------------------------
 # predict_Q(t_in, flow_in, t_out, return_std=False) живёт в surrogate_model.py:
-# мгновенное предсказание Q (kJ/h) БЕЗ обращения к HYSYS (+ std при return_std=True).
+# мгновенное предсказание Q (kJ/h) БЕЗ обращения к HYSYS (+ типичная ошибка при return_std=True).
 print("\n--- Демонстрация использования суррогата ---")
 examples = [
     (20.0, 50.0, 90.0),
@@ -98,10 +86,10 @@ predict_Q(*examples[0])   # первый вызов читает файл мод
 
 for t_in, flow_in, t_out in examples:
     t0 = time.perf_counter()
-    q_pred, q_std = predict_Q(t_in, flow_in, t_out, return_std=True)
+    q_pred, q_err = predict_Q(t_in, flow_in, t_out, return_std=True)
     dt_ms = (time.perf_counter() - t0) * 1000
     print(f"  T_in={t_in:5.1f} C, Flow_in={flow_in:5.1f} kg/h, T_out={t_out:6.1f} C "
-          f"->  Q = {q_pred:10.1f} +/- {q_std:6.1f} kJ/h   ({dt_ms:.2f} мс)")
+          f"->  Q = {q_pred:10.1f} kJ/h (типичная ошибка +/-{q_err:5.1f})   ({dt_ms:.2f} мс)")
 
 print("\nДля сравнения: один пересчёт в HYSYS через COM занимает обычно")
 print("от десятков до сотен миллисекунд (плюс время на сходимость солвера).")
@@ -112,4 +100,4 @@ print("Monte-Carlo анализ рисков, real-time советчики оп�
 print(f"\nГотово. Модель сохранена в '{MODEL_FILE.name}' — в любом другом скрипте")
 print("можно подключить её так (из папки src/):")
 print("  from surrogate_model import predict_Q")
-print("  q, std = predict_Q(T_in, Flow_in, T_out, return_std=True)")
+print("  q, typical_err = predict_Q(T_in, Flow_in, T_out, return_std=True)")

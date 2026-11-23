@@ -32,12 +32,11 @@ from scipy.interpolate import RBFInterpolator
 from sklearn.compose import TransformedTargetRegressor
 from sklearn.linear_model import LinearRegression
 from sklearn.neural_network import MLPRegressor
-from sklearn.preprocessing import PolynomialFeatures
 from sklearn.metrics import mean_absolute_error, r2_score
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from surrogate_model import EnthalpyGP, FEATURE_COLS, T_SAT_C, TARGET_COL, ROOT
+from surrogate_model import EnthalpyGP, QuadPolyModel, FEATURE_COLS, T_SAT_C, TARGET_COL, ROOT
 
 warnings.filterwarnings("ignore")
 
@@ -92,11 +91,6 @@ def small_nn():
     return TransformedTargetRegressor(regressor=mlp, transformer=StandardScaler())
 
 
-def quad_poly():
-    """Квадратичный полином (полная степень 2) на стандартизованных признаках."""
-    return make_pipeline(StandardScaler(), PolynomialFeatures(2), LinearRegression())
-
-
 def plain_gp():
     kernel = ConstantKernel(1.0) * Matern(length_scale=[1.0] * 3, nu=2.5) + WhiteKernel(1e-3)
     return make_pipeline(StandardScaler(), GaussianProcessRegressor(
@@ -114,7 +108,7 @@ MODELS = {
     "GP (raw Q)":                lambda: plain_gp(),
     "Boosting (q + phys)":       lambda: SpecificModel(gb()),
     "Phys. linear (q + phys)":   lambda: SpecificModel(LinearRegression()),
-    "Quad. poly (q + phys)":     lambda: SpecificModel(quad_poly()),
+    "Quad. poly (q + phys)":     lambda: QuadPolyModel(random_state=RANDOM_STATE),   # развёрнутая модель
     "RBF (q + phys)":            lambda: SpecificModel(RBFModel()),
     "Small NN (q + phys)":       lambda: SpecificModel(small_nn()),
     "Enthalpy GP":               lambda: EnthalpyGP(random_state=RANDOM_STATE),

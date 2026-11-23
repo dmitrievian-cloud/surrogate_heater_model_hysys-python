@@ -8,8 +8,9 @@ complex units (e.g. an FCC).
 
 **Headline result.** Predicting the *specific* heat duty q = Q / Flow with a
 phase flag cuts the error from ~3,000 kJ/h to ~5 kJ/h (R² = 1.0000) and keeps
-it at 6–7 kJ/h when extrapolating to input ranges the model never saw. The
-physics in the target and features matters far more than the model class.
+it at 5–14 kJ/h when extrapolating to input ranges the model never saw. The
+physics in the target and features matters far more than the model class: the
+deployed model is a plain quadratic polynomial.
 
 ## Why
 
@@ -42,25 +43,29 @@ confounded by feature engineering.
 | Gaussian Process (raw Q) | 2,850 | 59,500 |
 | Gradient Boosting (q + phys) | 1,730 | 4,100 |
 | Physical linear (q + phys) | 6.6 | 25.5 |
-| Quadratic polynomial (q + phys) | **4.6** | 14.3 |
+| **Quadratic polynomial (q + phys)** (deployed) | **4.6** | 14.3 |
 | RBF, thin-plate (q + phys) | 6.4 | 48.7 |
 | Small neural net 16-16 (q + phys) | 400 | 2,805 |
-| **Enthalpy GP** (deployed) | 5.1 | **7.0** |
+| Enthalpy GP (alternative with local σ) | 5.1 | **7.0** |
 | Hybrid: linear + GP on residuals | 6.2 | not tested |
 
 ¹ single 5-fold CV (R² = 0.71); the other rows are medians over 10 repeats.
 
 ![Model comparison](figures/model_comparison_boxplot.png)
 
-### How the Enthalpy GP works
+### How the physics-informed models work
 
 Since Q = m·(h_out − h_in), the specific heat duty q = Q / Flow depends only
 on the temperatures. Checked on the data: the flow coefficient is ≈ 0, and
-dq/dT_out ≈ 4.2 kJ/kg/K in the liquid (cp of water). The GP is therefore
-trained on q with features `[T_in, T_out, is_vapor]`, where
+dq/dT_out ≈ 4.2 kJ/kg/K in the liquid (cp of water). The models are therefore
+trained on q with features `[T_in, T_out, is_vapor, max(0, T_out−100)]`, where
 `is_vapor = T_out >= 100 °C`. The latent-heat jump lives entirely in that
 flag (the simulator's vapor fraction flips exactly at 100 °C in the data), and
-the smooth part is left to the GP. Final Q = q · Flow.
+the smooth part is left to a simple regressor. Final Q = q · Flow.
+
+The deployed `QuadPolyModel` is a degree-2 polynomial on these features. The
+GP variant (`EnthalpyGP`) is kept in `surrogate_model.py` as an alternative
+that provides a local σ.
 
 A plain GP on raw Q cannot do this: it smooths the step into a sigmoid across
 97.5–102 °C, and its predictive std is nearly flat (~5,000 kJ/h) while the real
@@ -101,12 +106,18 @@ of the range and tested on the rest. Test MAE, kJ/h:
   roughly a hundred times worse than the polynomial or more (presumably
   because a tanh network saturates outside the training data; not
   investigated further).
-- The GP is kept as the deployed model only because it provides σ and the best
-  worst-case extrapolation; the polynomial has no uncertainty estimate. If σ
-  is not needed, a quadratic polynomial on q with the phase flag is the
-  simplest accurate choice.
+- **Deployed model: the quadratic polynomial.** It is the most accurate in
+  interpolation and on two of three splits, and it is simple and fast. Its
+  price: no local uncertainty. `predict_Q(..., return_std=True)` returns a
+  *constant* typical error (RMSE of q residuals in 5-fold CV × Flow, ≈ 6 kJ/h),
+  which describes accuracy inside the training box and says nothing outside
+  it. The Enthalpy GP is the better choice when a local σ is needed.
+- Sanity check far outside the box (no HYSYS reference, so not a validation):
+  at T_in = 25, Flow = 50, the polynomial's q at T_out = 300 °C is within 0.5 %
+  of the physical-linear and GP models, and ~5 % below the linear model at
+  800 °C; it extrapolates smoothly rather than diverging.
 
-### Uncertainty
+### Uncertainty (Enthalpy GP and hybrid; the deployed polynomial has none)
 
 ![Uncertainty](figures/uncertainty_band.png)
 
@@ -121,6 +132,9 @@ of the range and tested on the rest. Test MAE, kJ/h:
   error, but it barely grows outside the box because the residual GP reverts
   to zero while the linear part keeps extrapolating. Better calibrated inside,
   not an extrapolation detector. Use the range check (`is_trusted`) with it.
+
+For the deployed polynomial the same range check is the only guard outside the
+training box.
 
 ### Other plots
 
@@ -169,18 +183,19 @@ of the range and tested on the rest. Test MAE, kJ/h:
    Flow_in, T_out) using Latin Hypercube Sampling (DoE), and records the
    simulator's response. Output: `data/phase1_heater_dataset.xlsx`.
 2. **`src/heater_02_train_model.py`** — trains and compares Linear Regression,
-   Gradient Boosting, a plain Gaussian Process and the Enthalpy GP with 5-fold
-   cross-validation (out-of-fold predictions, not a single train/test split).
-3. **`src/heater_03_deploy_model.py`** — trains the final model (Enthalpy GP)
-   on the full dataset, stores training ranges and the σ trust threshold, and
+   Gradient Boosting, a plain Gaussian Process, the Enthalpy GP and the
+   quadratic polynomial with 5-fold cross-validation (out-of-fold predictions, not a single train/test split).
+3. **`src/heater_03_deploy_model.py`** — trains the final model (quadratic
+   polynomial on q) on the full dataset, stores the training ranges, and
    saves it to `models/surrogate_heater_model.pkl`.
 4. **`src/heater_04_use_surrogate_batch.py`** — batch what-if / sensitivity
-   analysis with a ±2σ band, no HYSYS required.
+   analysis, no HYSYS required.
 5. **`src/heater_05_use_surrogate_interactive.py`** — interactive console
-   querying (enter T_in, Flow_in, T_out, get Q ± σ back instantly).
+   querying (enter T_in, Flow_in, T_out, get Q and a typical error back
+   instantly).
 6. **`src/heater_06_optimize.py`** — optimization on top of the surrogate
    (`scipy.optimize.brentq`) under a conservative constraint
-   `Q + 2σ <= Q_max`: maximum flow for a given T_out and heater limit, and
+   `Q + 2·(typical error) <= Q_max`: maximum flow for a given T_out and heater limit, and
    maximum reachable T_out for a given flow (it reports when the limit falls
    short of the latent heat at 100 °C).
 7. **`src/heater_07_extrapolation.py`** — trains on part of each input range
@@ -198,28 +213,31 @@ of the range and tested on the rest. Test MAE, kJ/h:
 from surrogate_model import predict_Q, predict_interval, is_trusted
 
 q = predict_Q(20.0, 50.0, 130.0)                       # kJ/h
-q, sigma = predict_Q(20.0, 50.0, 130.0, return_std=True)
+q, err = predict_Q(20.0, 50.0, 130.0, return_std=True)  # err: typical error, constant
 q_arr = predict_Q(20.0, 50.0, t_out_array)             # numpy arrays: vectorized
-lo, hi = predict_interval(20.0, 50.0, 130.0, k=2)      # mean ∓ kσ band
+lo, hi = predict_interval(20.0, 50.0, 130.0, k=2)      # mean ∓ k·(typical error)
 ok = is_trusted(20.0, 50.0, 130.0)                     # True / False (or array)
 ```
 
 - `predict_Q` accepts scalars or numpy arrays (5,000 points in ~30 ms) and
   warns (`RuntimeWarning`) when an input is outside the training ranges,
   which are stored in the model file.
-- `predict_interval` gives the mean ∓ kσ band; use the upper bound for
-  "not more than" constraints.
-- `is_trusted` is true only if the input is inside the training ranges **and**
-  σ/Flow is below a threshold set at training time (1.25 × the largest
-  out-of-fold σ/Flow). On this dataset the σ criterion adds little beyond the
-  range check, because σ is nearly flat inside the box.
+- `return_std=True` returns, for the deployed polynomial, a constant typical
+  error (≈ 6 kJ/h), not a local uncertainty; with the GP model it is a real
+  predictive σ.
+- `predict_interval` gives the mean ∓ k·(that error) band; use the upper bound
+  for "not more than" constraints. It covers accuracy inside the training box
+  only.
+- `is_trusted` is true only if the input is inside the training ranges (a
+  model that stores a σ threshold, like the GP variant, can add a σ criterion;
+  on this dataset it added little beyond the range check).
 
 ## Known limitations
 
 - **Phase-change point.** Exactly at the boiling point, a temperature-and-
   pressure specification does not determine vapor fraction (the stream sits
-  on the saturation line), so the true value is ambiguous. The Enthalpy GP
-  handles it with a hard threshold `T_out >= T_sat` (100 °C); only 6 of the 150
+  on the saturation line), so the true value is ambiguous. The models
+  handle it with a hard threshold `T_out >= T_sat` (100 °C); only 6 of the 150
   training points lie in 98–102 °C, the nearest at 99.9 and 100.4 °C, so
   within a few tenths of a degree of the threshold the result is only as good
   as that convention.
@@ -227,10 +245,11 @@ ok = is_trusted(20.0, 50.0, 130.0)                     # True / False (or array)
   ~101 kPa). A different pressure needs a new T_sat and regenerated data.
 - **Extrapolation is tested only inside the sampled box.** The range-split
   test holds out the upper part of each variable, not the liquid-to-vapor
-  regime change and not inputs far outside the box. There the GP σ is the
-  only quantitative warning, and it is not a sharp detector (flat ~250 kJ/h in
-  the held-out slices). `predict_Q` warns when an input leaves the training
-  range; `is_trusted` combines both checks.
+  regime change and not inputs far outside the box. For the deployed polynomial
+  the only guard there is the range check: `predict_Q` warns when an input
+  leaves the training range and `is_trusted` returns False. (The GP's σ grows
+  only far outside the box and is flat in the held-out slices, so it is not a
+  sharp detector either.)
 - **Heater-specific trick.** Dividing by flow and the phase flag use known
   physics of this unit; the same recipe for an FCC would need its own
   physics-informed target and features. The model ranking was obtained on a

@@ -54,13 +54,11 @@ def run_batch():
 
     plt.figure(figsize=(8, 6))
     for t_in in t_in_values:
-        q_values, q_std = predict_Q(t_in, flow_in_fixed, t_out_range, return_std=True)   # векторный вызов
-        line, = plt.plot(t_out_range, q_values, marker="", label=f"T_in = {t_in:.0f} C")
-        plt.fill_between(t_out_range, q_values - 2 * q_std, q_values + 2 * q_std,
-                         color=line.get_color(), alpha=0.25, linewidth=0)
+        q_values = predict_Q(t_in, flow_in_fixed, t_out_range)   # векторный вызов
+        plt.plot(t_out_range, q_values, marker="", label=f"T_in = {t_in:.0f} C")
 
     plt.xlabel("T_out (целевая температура выхода), C")
-    plt.ylabel("Q, kJ/h (предсказание суррогата, полоса = ±2σ)")
+    plt.ylabel("Q, kJ/h (предсказание суррогата)")
     plt.title(f"Сенситивити-анализ: Q vs T_out при Flow_in = {flow_in_fixed:.0f} kg/h\n"
               f"(построено за секунды — без единого запуска HYSYS)")
     plt.legend()

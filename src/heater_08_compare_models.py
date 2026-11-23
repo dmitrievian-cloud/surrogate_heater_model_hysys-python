@@ -11,7 +11,8 @@
   - Boosting (q + phys)        — бустинг на q и физических признаках
   - Phys. linear (q + phys)    — линейная физическая модель
   - GP (raw Q)                 — GP на сырых признаках
-  - Enthalpy GP                — GP на q и физических признаках (развёрнутая модель)
+  - Quad. poly (q + phys)      — квадратичный полином на q и физ. признаках (РАЗВЁРНУТАЯ модель)
+  - Enthalpy GP                — GP на q и физических признаках (альтернатива с локальной sigma)
   - Hybrid: linear + GP(resid) — физическая линейная модель + GP на её остатках
 
 Вторая картинка: предсказание Q и полоса ±2σ по T_out, включая экстраполяцию
@@ -37,9 +38,8 @@ from sklearn.model_selection import RepeatedKFold
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-from heater_07_extrapolation import (RBFModel, SpecificModel, gb, plain_gp,
-                                     quad_poly, small_nn)
-from surrogate_model import EnthalpyGP, FEATURE_COLS, TARGET_COL, ROOT, get_domain
+from heater_07_extrapolation import RBFModel, SpecificModel, gb, plain_gp, small_nn
+from surrogate_model import EnthalpyGP, QuadPolyModel, FEATURE_COLS, TARGET_COL, ROOT, get_domain
 
 warnings.filterwarnings("ignore")
 
@@ -82,7 +82,7 @@ MODELS = {
     "GP (raw Q)":                  lambda: plain_gp(),
     "Boosting (q + phys)":         lambda: SpecificModel(gb()),
     "Phys. linear (q + phys)":     lambda: SpecificModel(LinearRegression()),
-    "Quad. poly (q + phys)":       lambda: SpecificModel(quad_poly()),
+    "Quad. poly (q + phys)":       lambda: QuadPolyModel(random_state=RANDOM_STATE),
     "RBF (q + phys)":              lambda: SpecificModel(RBFModel()),
     "Small NN (q + phys)":         lambda: SpecificModel(small_nn()),
     "Enthalpy GP":                 lambda: EnthalpyGP(random_state=RANDOM_STATE),

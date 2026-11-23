@@ -40,8 +40,8 @@ def run_interactive():
             print("  Нужно вводить числа. Попробуй ещё раз.\n")
             continue
 
-        q, std = predict_Q(t_in, flow_in, t_out, return_std=True)
-        print(f"  -> Q = {q:.1f} +/- {std:.1f} kJ/h (1 sigma)\n")
+        q, err = predict_Q(t_in, flow_in, t_out, return_std=True)
+        print(f"  -> Q = {q:.1f} kJ/h (типичная ошибка в диапазоне обучения +/-{err:.1f})\n")
 
 
 # ---------------------------------------------------------------------------

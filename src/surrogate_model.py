@@ -25,8 +25,10 @@ import numpy as np
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel, Matern, WhiteKernel
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import KFold
 from sklearn.pipeline import make_pipeline
-from sklearn.preprocessing import StandardScaler
+from sklearn.preprocessing import PolynomialFeatures, StandardScaler
 
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_FILE = ROOT / "models" / "surrogate_heater_model.pkl"
@@ -70,6 +72,47 @@ class EnthalpyGP(BaseEstimator, RegressorMixin):
         mu, sd = self.pipe_[-1].predict(D, return_std=True)
         flow = X[:, 1]
         return (mu * flow, sd * flow) if return_std else mu * flow
+
+
+class QuadPolyModel(BaseEstimator, RegressorMixin):
+    """Квадратичный полином по q = Q/Flow; вход X = [T_in, Flow_in, T_out], выход — Q (kJ/h).
+
+    Признаки: [T_in, T_out, is_vapor, max(0, T_out - T_sat)] -> полином степени 2.
+    Это развёрнутая модель (см. README: самая точная в CV, 4.6 kJ/h).
+
+    ВАЖНО про return_std: у полинома нет локальной неопределённости. Возвращается
+    КОНСТАНТА sigma_q_ * Flow, где sigma_q_ — RMSE остатков q в 5-fold CV на
+    обучающих данных ("типичная ошибка внутри обучающего диапазона"). Вне диапазона
+    она ничего не говорит — для этого есть is_trusted (проверка диапазона)."""
+
+    def __init__(self, t_sat_c=T_SAT_C, random_state=42):
+        self.t_sat_c = t_sat_c
+        self.random_state = random_state
+
+    def _design(self, X):
+        X = np.asarray(X, dtype=float)
+        t_in, t_out = X[:, 0], X[:, 2]
+        return np.column_stack([t_in, t_out, (t_out >= self.t_sat_c).astype(float),
+                                np.maximum(0.0, t_out - self.t_sat_c)])
+
+    @staticmethod
+    def _make_pipe():
+        return make_pipeline(StandardScaler(), PolynomialFeatures(2), LinearRegression())
+
+    def fit(self, X, y):
+        X = np.asarray(X, dtype=float)
+        D, q = self._design(X), np.asarray(y, dtype=float) / X[:, 1]
+        oof = np.zeros(len(q))
+        for tr, te in KFold(5, shuffle=True, random_state=self.random_state).split(D):
+            oof[te] = self._make_pipe().fit(D[tr], q[tr]).predict(D[te])
+        self.sigma_q_ = float(np.sqrt(np.mean((q - oof) ** 2)))   # kJ/kg
+        self.pipe_ = self._make_pipe().fit(D, q)
+        return self
+
+    def predict(self, X, return_std=False):
+        X = np.asarray(X, dtype=float)
+        mu = self.pipe_.predict(self._design(X)) * X[:, 1]
+        return (mu, np.full(len(mu), self.sigma_q_) * X[:, 1]) if return_std else mu
 
 
 _BUNDLE = None
@@ -139,9 +182,11 @@ def predict_interval(t_in, flow_in, t_out, k=2.0):
 
 
 def is_trusted(t_in, flow_in, t_out):
-    """Флаг доверия (булев, числа или массив): вход внутри диапазона обучения И
-    удельная неопределённость sigma/Flow не выше порога, посчитанного при обучении
-    (1.25 x максимум out-of-fold sigma/Flow, см. heater_03). Без предупреждений."""
+    """Флаг доверия (булев, числа или массив): вход внутри диапазона обучения.
+
+    Если модель хранит порог sigma_q_trust (локальная sigma, как у GP), то дополнительно
+    требуется sigma/Flow <= порога. У развёрнутого полинома порога нет (его sigma
+    константна и ничего не различает), так что флаг = проверка диапазона. Без предупреждений."""
     model = load_model()
     ok = check_domain(t_in, flow_in, t_out, warn=False)
     thr = _BUNDLE.get("sigma_q_trust")
