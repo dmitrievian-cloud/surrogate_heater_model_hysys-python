@@ -54,8 +54,7 @@ def run_batch():
 
     plt.figure(figsize=(8, 6))
     for t_in in t_in_values:
-        res = np.array([predict_Q(t_in, flow_in_fixed, t_out, return_std=True) for t_out in t_out_range])
-        q_values, q_std = res[:, 0], res[:, 1]
+        q_values, q_std = predict_Q(t_in, flow_in_fixed, t_out_range, return_std=True)   # векторный вызов
         line, = plt.plot(t_out_range, q_values, marker="", label=f"T_in = {t_in:.0f} C")
         plt.fill_between(t_out_range, q_values - 2 * q_std, q_values + 2 * q_std,
                          color=line.get_color(), alpha=0.25, linewidth=0)

@@ -38,19 +38,24 @@ T_SAT_C = 100.0
 class EnthalpyGP(BaseEstimator, RegressorMixin):
     """GP по q = Q/Flow; вход X = [T_in, Flow_in, T_out], выход — Q (kJ/h)."""
 
-    def __init__(self, t_sat_c=T_SAT_C, random_state=42):
+    def __init__(self, t_sat_c=T_SAT_C, use_kink=False, random_state=42):
         self.t_sat_c = t_sat_c
+        self.use_kink = use_kink      # + признак max(0, T_out - T_sat): излом наклона q(T) в паре
         self.random_state = random_state
 
     def _design(self, X):
         X = np.asarray(X, dtype=float)
         t_in, t_out = X[:, 0], X[:, 2]
-        return np.c_[t_in, t_out, (t_out >= self.t_sat_c).astype(float)]
+        cols = [t_in, t_out, (t_out >= self.t_sat_c).astype(float)]
+        if self.use_kink:
+            cols.append(np.maximum(0.0, t_out - self.t_sat_c))
+        return np.column_stack(cols)
 
     def fit(self, X, y):
         X = np.asarray(X, dtype=float)
         q = np.asarray(y, dtype=float) / X[:, 1]
-        kernel = ConstantKernel(1.0) * Matern(length_scale=[1.0] * 3, nu=2.5) + WhiteKernel(1e-3)
+        n_feat = 4 if self.use_kink else 3
+        kernel = ConstantKernel(1.0) * Matern(length_scale=[1.0] * n_feat, nu=2.5) + WhiteKernel(1e-3)
         self.pipe_ = make_pipeline(
             StandardScaler(),
             GaussianProcessRegressor(kernel=kernel, normalize_y=True,
@@ -85,29 +90,39 @@ def get_domain():
 
 
 def check_domain(t_in, flow_in, t_out):
-    """Предупреждает (RuntimeWarning), если вход вне диапазона обучения. Возвращает True, если всё в домене."""
-    load_model()
-    domain = _BUNDLE.get("domain")   # {имя признака: (min, max)}, сохраняется в heater_03
+    """Проверка входов (числа или массивы) на попадание в диапазон обучения.
+
+    Возвращает булев массив «точка в домене»; по каждому признаку с нарушениями
+    выдаёт ОДИН RuntimeWarning (с числом точек и крайним значением)."""
+    t_in, flow_in, t_out = np.broadcast_arrays(*(np.asarray(v, dtype=float) for v in (t_in, flow_in, t_out)))
+    ok = np.ones(t_in.shape, dtype=bool)
+    domain = get_domain()   # {имя признака: (min, max)}, сохраняется в heater_03
     if not domain:
-        return True
-    ok = True
-    for name, val in zip(FEATURE_COLS, (t_in, flow_in, t_out)):
+        return ok
+    for name, vals in zip(FEATURE_COLS, (t_in, flow_in, t_out)):
         lo, hi = domain[name]
-        if not lo <= val <= hi:
-            ok = False
-            warnings.warn(f"{name}={val:g} вне диапазона обучения [{lo:g}, {hi:g}] — "
-                          f"предсказание ненадёжно", RuntimeWarning, stacklevel=3)
+        bad = (vals < lo) | (vals > hi)
+        if bad.any():
+            ok &= ~bad
+            far = vals[bad][np.argmax(np.abs(vals[bad] - np.clip(vals[bad], lo, hi)))]
+            warnings.warn(f"{name}: {int(bad.sum())} знач. вне диапазона обучения [{lo:g}, {hi:g}] "
+                          f"(крайнее: {far:g}) — предсказание ненадёжно", RuntimeWarning, stacklevel=3)
     return ok
 
 
 def predict_Q(t_in, flow_in, t_out, return_std=False):
     """Q (kJ/h) по T_in (C), Flow_in (kg/h), T_out (C); опционально ещё и std (kJ/h).
 
-    Если вход вне диапазона обучения, выдаётся RuntimeWarning."""
+    Аргументы — числа ИЛИ массивы (вещательное сложение, как в numpy): для чисел
+    возвращается float, для массивов — массив формы вещания. Вне диапазона обучения
+    выдаётся RuntimeWarning."""
     model = load_model()
     check_domain(t_in, flow_in, t_out)
-    x = [[t_in, flow_in, t_out]]
+    a, b, c = np.broadcast_arrays(*(np.asarray(v, dtype=float) for v in (t_in, flow_in, t_out)))
+    x = np.column_stack([a.ravel(), b.ravel(), c.ravel()])
     if return_std:
         mu, sd = model.predict(x, return_std=True)
-        return float(mu[0]), float(sd[0])
-    return float(model.predict(x)[0])
+        mu, sd = mu.reshape(a.shape), sd.reshape(a.shape)
+        return (float(mu), float(sd)) if a.ndim == 0 else (mu, sd)
+    mu = model.predict(x).reshape(a.shape)
+    return float(mu) if a.ndim == 0 else mu

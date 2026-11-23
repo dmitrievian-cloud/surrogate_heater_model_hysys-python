@@ -50,7 +50,11 @@ drives via COM automation.
    maximum reachable T_out for a given flow (it reports when the limit falls
    short of the latent heat at 100 °C).
 
-`predict_Q` warns (`RuntimeWarning`) when an input is outside the training
+7. **`src/heater_07_extrapolation.py`** — trains on part of each input range
+   and tests on the rest, for 7 models on equal footing (see Results).
+
+`predict_Q` accepts scalars or numpy arrays (vectorized: 5,000 points in
+~30 ms) and warns (`RuntimeWarning`) when an input is outside the training
 ranges, which are stored in the model file. The sensitivity plot shows a
 ±2σ band.
 
@@ -83,6 +87,41 @@ it still grows when extrapolating (e.g. ~1,600 kJ/h at T_out = 300 °C).
 This is not the removed `Dist_to_boiling_C`: a step flag carries information
 a constant shift does not.
 
+### Extrapolation test (`heater_07_extrapolation.py`)
+
+Random k-fold CV only tests interpolation, so models are also trained on
+part of the range and tested on the rest. All "phys" models get the same
+target q = Q/Flow and features `[T_in, T_out, is_vapor, max(0, T_out−100)]`,
+so the comparison is not confounded by feature engineering. Test MAE, kJ/h:
+
+| Model | Flow 30–60 → 60–80 | T_in ≤30 → >30 | T_out ≤130 → >130 |
+|---|---|---|---|
+| Linear (raw Q) | 45,600 | 28,500 | 57,700 |
+| Boosting (raw Q) | 19,400 | 8,300 | 3,100 |
+| GP (raw Q) | 17,100 | 5,700 | 59,500 |
+| Boosting (q + phys) | 2,800 | 4,100 | 2,000 |
+| Physical linear (q + phys) | 7.7 | 6.7 | 25.5 |
+| **Enthalpy GP** | **5.8** | **5.4** | **7.0** |
+| Enthalpy GP + kink feature | 5.8 | 5.4 | 7.0 |
+
+Findings:
+- **The physics, not the model class, does most of the work.** Predicting
+  q = Q/Flow with a phase flag takes every model from 10³–10⁴ kJ/h error to
+  ~10 kJ/h or better. A plain linear model on those features is already
+  within a few kJ/h of the GP.
+- **Trees fail to extrapolate even with the physics** (2,000–4,000 kJ/h),
+  as expected: they cannot continue a trend. Raw boosting did surprisingly
+  well on the T_out split (3,100), where Q changes slowly with T_out in
+  vapor, but is 10³× worse on Flow and T_in.
+- **The `max(0, T_out−100)` kink feature gave no gain** for the GP (identical
+  to 3 digits); it stays an optional parameter (`use_kink`), off by default.
+- The GP is kept as the deployed model because it is the most accurate on the
+  hardest split and provides σ, but a linear physical model is a legitimate,
+  simpler alternative. Caveat: this is a clean, nearly linear system with
+  noise-free simulator output; the ranking may not carry over to the FCC.
+
+![Extrapolation test](figures/extrapolation_test.png)
+
 ![Parity plot](figures/phase2_parity_plot.png)
 ![Sensitivity analysis](figures/sensitivity_Q_vs_Tout.png)
 
@@ -96,10 +135,15 @@ a constant shift does not.
   degree of the threshold the result is only as good as that convention.
 - **Fixed pressure.** `T_sat = 100 °C` is a constant (the case runs at
   ~101 kPa). A different pressure needs a new T_sat and regenerated data.
-- **Limited extrapolation.** The model was trained on T_in ≈ 10–40 °C,
-  T_out ≈ 60–160 °C, flow ≈ 30–80 kg/h (150 LHS points). Outside that domain
-  the GP std grows, but the mean reverts toward the prior and loses accuracy;
-  check `return_std` or the ranges in `heater_01_generate_dataset.py`.
+- **Extrapolation is tested only inside the sampled box.** The model was
+  trained on T_in ≈ 10–40 °C, T_out ≈ 60–160 °C, flow ≈ 30–80 kg/h (150 LHS
+  points). The range-split test (below) holds out the upper part of each
+  variable and the Enthalpy GP stays at MAE ≈ 6–7 kJ/h. That does **not**
+  cover the liquid-to-vapor regime change (never held out) or inputs far
+  outside the box, and there the GP std is the only warning: it grows far
+  from the data (~1,600 kJ/h at T_out = 300 °C) but stays flat (~250 kJ/h)
+  in the held-out slices above, so it is not a sharp extrapolation detector.
+  `predict_Q` additionally warns when an input leaves the training range.
 - **Heater-specific trick.** Dividing by flow and the phase flag use known
   physics of this unit; the same recipe for an FCC would need its own
   physics-informed target and features.
@@ -118,6 +162,7 @@ python src/heater_03_deploy_model.py
 python src/heater_04_use_surrogate_batch.py
 python src/heater_05_use_surrogate_interactive.py
 python src/heater_06_optimize.py
+python src/heater_07_extrapolation.py
 ```
 
 ## Roadmap
