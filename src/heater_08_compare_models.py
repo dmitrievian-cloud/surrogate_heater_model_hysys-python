@@ -43,7 +43,7 @@ from surrogate_model import EnthalpyGP, QuadPolyModel, FEATURE_COLS, TARGET_COL,
 
 warnings.filterwarnings("ignore")
 
-IN_XLSX = ROOT / "data" / "phase1_heater_dataset.xlsx"
+IN_XLSX = ROOT / "data" / "combined_heater_dataset.xlsx"
 OUT_BOX = ROOT / "figures" / "model_comparison_boxplot.png"
 OUT_UNC = ROOT / "figures" / "uncertainty_band.png"
 N_REPEATS = 10

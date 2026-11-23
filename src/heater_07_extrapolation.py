@@ -40,7 +40,7 @@ from surrogate_model import EnthalpyGP, QuadPolyModel, FEATURE_COLS, T_SAT_C, TA
 
 warnings.filterwarnings("ignore")
 
-IN_XLSX = ROOT / "data" / "phase1_heater_dataset.xlsx"
+IN_XLSX = ROOT / "data" / "combined_heater_dataset.xlsx"
 OUT_PLOT = ROOT / "figures" / "extrapolation_test.png"
 RANDOM_STATE = 42
 

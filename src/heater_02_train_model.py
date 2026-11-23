@@ -55,7 +55,7 @@ from surrogate_model import EnthalpyGP, QuadPolyModel   # GP по q = Q/Flow + �
 # НАСТРОЙКИ
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).resolve().parent.parent   # корень репозитория (src/ лежит на уровень ниже)
-IN_XLSX = ROOT / "data" / "phase1_heater_dataset.xlsx"
+IN_XLSX = ROOT / "data" / "combined_heater_dataset.xlsx"
 FEATURE_COLS = ["T_in_C", "Flow_in_kgh", "T_out_target_C"]
 TARGET_COL = "Q_kJ_per_h"
 N_FOLDS = 5

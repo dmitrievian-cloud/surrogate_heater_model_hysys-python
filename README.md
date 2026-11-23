@@ -7,8 +7,8 @@ what-if analysis — proof of concept for scaling the same approach to more
 complex units (e.g. an FCC).
 
 **Headline result.** Predicting the *specific* heat duty q = Q / Flow with a
-phase flag cuts the error from ~3,000 kJ/h to ~5 kJ/h (R² = 1.0000) and keeps
-it at 5–14 kJ/h when extrapolating to input ranges the model never saw. The
+phase flag cuts the error from ~3,000 kJ/h to ~4 kJ/h (R² = 1.0000) and keeps
+it at 4–13 kJ/h when extrapolating to input ranges the model never saw. The
 physics in the target and features matters far more than the model class: the
 deployed model is a plain quadratic polynomial.
 
@@ -30,26 +30,27 @@ drives via COM automation. Inputs: T_in, Flow_in, T_out; output: heat duty Q.
 
 ## Results
 
-All numbers come from `data/phase1_heater_dataset.xlsx` (150 Latin Hypercube
-points, T_in ≈ 10–40 °C, flow ≈ 30–80 kg/h, T_out ≈ 60–160 °C, ~101 kPa).
+All numbers come from `data/combined_heater_dataset.xlsx` (191 points: 150 LHS
++ 41 targeted points near 100 °C, domain corners and face centers;
+T_in = 10–40 °C, flow = 30–80 kg/h, T_out = 60–160 °C, ~101 kPa).
 "phys" models get the same target q = Q/Flow and features
 `[T_in, T_out, is_vapor, max(0, T_out−100)]`, so the comparison is not
 confounded by feature engineering.
 
 | Model | Interpolation: MAE, kJ/h (10×5-fold CV, median) | Extrapolation: worst-case MAE, kJ/h (range-split) |
 |---|---|---|
-| Linear Regression (raw Q) | ~30,100 ¹ | 57,700 |
-| Gradient Boosting (raw Q) | 3,600 | 19,400 |
-| Gaussian Process (raw Q) | 2,850 | 59,500 |
-| Gradient Boosting (q + phys) | 1,730 | 4,100 |
-| Physical linear (q + phys) | 6.6 | 25.5 |
-| **Quadratic polynomial (q + phys)** (deployed) | **4.6** | 14.3 |
-| RBF, thin-plate (q + phys) | 6.4 | 48.7 |
-| Small neural net 16-16 (q + phys) | 400 | 2,805 |
-| Enthalpy GP (alternative with local σ) | 5.1 | **7.0** |
-| Hybrid: linear + GP on residuals | 6.2 | not tested |
+| Linear Regression (raw Q) | ~30,100 ¹ | 63,500 |
+| Gradient Boosting (raw Q) | 2,070 | 18,300 |
+| Gaussian Process (raw Q) | 17,300 | 66,600 |
+| Gradient Boosting (q + phys) | 641 | 2,900 |
+| Physical linear (q + phys) | 6.5 | 28.7 |
+| **Quadratic polynomial (q + phys)** (deployed) | **3.9** | 12.7 |
+| RBF, thin-plate (q + phys) | 5.1 | 55.7 |
+| Small neural net 16-16 (q + phys) | 323 | 3,142 |
+| Enthalpy GP (alternative with local σ) | 4.6 | **9.0** |
+| Hybrid: linear + GP on residuals | 5.3 | not tested |
 
-¹ single 5-fold CV (R² = 0.71); the other rows are medians over 10 repeats.
+¹ single 5-fold CV (R² = 0.64); the other rows are medians over 10 repeats.
 
 ![Model comparison](figures/model_comparison_boxplot.png)
 
@@ -78,16 +79,16 @@ of the range and tested on the rest. Test MAE, kJ/h:
 
 | Model | Flow 30–60 → 60–80 | T_in ≤30 → >30 | T_out ≤130 → >130 |
 |---|---|---|---|
-| Linear (raw Q) | 45,600 | 28,500 | 57,700 |
-| Boosting (raw Q) | 19,400 | 8,300 | 3,100 |
-| GP (raw Q) | 17,100 | 5,700 | 59,500 |
-| Boosting (q + phys) | 2,800 | 4,100 | 2,000 |
-| Physical linear (q + phys) | 7.7 | 6.7 | 25.5 |
-| Quadratic polynomial (q + phys) | **5.0** | **4.8** | 14.3 |
-| RBF, thin-plate (q + phys) | 7.2 | 6.4 | 48.7 |
-| Small neural net 16-16 (q + phys) | 651 | 2,805 | 2,700 |
-| Enthalpy GP | 5.8 | 5.4 | **7.0** |
-| Enthalpy GP + kink feature | 5.8 | 5.4 | 7.0 |
+| Linear (raw Q) | 50,400 | 37,100 | 63,500 |
+| Boosting (raw Q) | 18,300 | 5,100 | 3,700 |
+| GP (raw Q) | 19,300 | 30,400 | 66,600 |
+| Boosting (q + phys) | 539 | 2,900 | 2,000 |
+| Physical linear (q + phys) | 7.5 | 7.0 | 28.7 |
+| Quadratic polynomial (q + phys) | **4.4** | **6.4** | 12.7 |
+| RBF, thin-plate (q + phys) | 5.6 | 5.7 | 55.7 |
+| Small neural net 16-16 (q + phys) | 385 | 2,588 | 3,142 |
+| Enthalpy GP | 4.8 | 4.6 | **9.0** |
+| Enthalpy GP + kink feature | 6.9 | 6.6 | 28.0 |
 
 ![Extrapolation test](figures/extrapolation_test.png)
 
@@ -98,18 +99,18 @@ of the range and tested on the rest. Test MAE, kJ/h:
 - The `max(0, T_out−100)` kink feature gave no gain for the GP (identical to
   3 digits); it stays an optional parameter (`use_kink`), off by default.
 - Once q and the phase flag are used, **simple models are as good as the GP**:
-  a quadratic polynomial is the most accurate in interpolation (4.6 kJ/h) and
-  on two of three range splits (it likely captures the slight curvature of
-  cp(T)), the GP is best on the T_out split (7.0 vs 14.3 kJ/h) and RBF with a
-  linear tail stays in the same range (6–49 kJ/h). The small neural net is
-  the exception: 400 kJ/h in CV and 650–2,800 kJ/h when extrapolating,
+  a quadratic polynomial is the most accurate in interpolation (3.9 kJ/h) and
+  on the Flow split (4.4 kJ/h), the GP is best on the T_out split (9.0 vs
+  12.7 kJ/h) and RBF with a linear tail stays in the same range (5–56 kJ/h).
+  The small neural net is the exception: 323 kJ/h in CV and 385–3,142 kJ/h
+  when extrapolating,
   roughly a hundred times worse than the polynomial or more (presumably
   because a tanh network saturates outside the training data; not
   investigated further).
 - **Deployed model: the quadratic polynomial.** It is the most accurate in
   interpolation and on two of three splits, and it is simple and fast. Its
   price: no local uncertainty. `predict_Q(..., return_std=True)` returns a
-  *constant* typical error (RMSE of q residuals in 5-fold CV × Flow, ≈ 6 kJ/h),
+  *constant* typical error (RMSE of q residuals in 5-fold CV × Flow, ≈ 5–7 kJ/h),
   which describes accuracy inside the training box and says nothing outside
   it. The Enthalpy GP is the better choice when a local σ is needed.
 - Sanity check far outside the box (no HYSYS reference, so not a validation):
@@ -125,8 +126,8 @@ of the range and tested on the rest. Test MAE, kJ/h:
 - **GP on raw Q** draws a smooth sigmoid across the step, and outside the
   training range its mean reverts to the prior with a huge σ.
 - **Enthalpy GP**: 2σ ≈ 420 kJ/h, almost flat inside the box, growing only
-  far outside (σ ≈ 520 kJ/h at 220 °C, 1,750 kJ/h at 300 °C). It is ~70×
-  larger than the real error (~6 kJ/h): safe, but pessimistic. A flat σ does
+  far outside (σ ≈ 436 kJ/h at 220 °C, 1,406 kJ/h at 300 °C). It is ~90×
+  larger than the real error (~5 kJ/h): safe, but pessimistic. A flat σ does
   not mark regions of higher error.
 - **Hybrid** (linear + GP on residuals): 2σ ≈ 5–20 kJ/h, close to the real
   error, but it barely grows outside the box because the residual GP reverts
@@ -161,8 +162,8 @@ training box.
    a value through COM can fail silently, and a surrogate trained on such
    data learns nothing about that input. Here the dataset records the achieved
    T_out next to the target and they match exactly (max difference 0.0 °C over
-   all 150 points); T_in and flow have no such read-back column and are not
-   verified this way.
+   all 191 points); T_in and flow were verified via read-back in
+   `heater_09_extended_doe.py` (0 mismatches across 41 extra points).
 6. **Compare models on equal terms.** Giving only the GP the physical features
    would have mixed "better algorithm" with "better features". Boosting and
    the linear model got the same q and features.
@@ -181,7 +182,7 @@ training box.
 1. **`src/heater_01_generate_dataset.py`** — connects to a running HYSYS
    case via COM automation (`pywin32`), samples the input space (T_in,
    Flow_in, T_out) using Latin Hypercube Sampling (DoE), and records the
-   simulator's response. Output: `data/phase1_heater_dataset.xlsx`.
+   simulator's response. Output: `data/phase1_heater_dataset.xlsx` (150 pts).
 2. **`src/heater_02_train_model.py`** — trains and compares Linear Regression,
    Gradient Boosting, a plain Gaussian Process, the Enthalpy GP and the
    quadratic polynomial with 5-fold cross-validation (out-of-fold predictions, not a single train/test split).
@@ -203,6 +204,10 @@ training box.
 8. **`src/heater_08_compare_models.py`** — 10 × repeated 5-fold CV with
    boxplots for nine approaches (including the hybrid) and the uncertainty
    plot. `--plots-only` redraws only the uncertainty plot.
+9. **`src/heater_09_extended_doe.py`** — extended DoE: 27 points near 100 °C,
+   8 domain-corner points (2³ factorial), 6 face-center points, with COM
+   write-verification. Output: `data/phase2_extra_points.xlsx`; merged into
+   `data/combined_heater_dataset.xlsx` (191 pts total).
 
 ### Using the surrogate from your own code
 
@@ -223,7 +228,7 @@ ok = is_trusted(20.0, 50.0, 130.0)                     # True / False (or array)
   warns (`RuntimeWarning`) when an input is outside the training ranges,
   which are stored in the model file.
 - `return_std=True` returns, for the deployed polynomial, a constant typical
-  error (≈ 6 kJ/h), not a local uncertainty; with the GP model it is a real
+  error (≈ 5–7 kJ/h), not a local uncertainty; with the GP model it is a real
   predictive σ.
 - `predict_interval` gives the mean ∓ k·(that error) band; use the upper bound
   for "not more than" constraints. It covers accuracy inside the training box
@@ -237,8 +242,8 @@ ok = is_trusted(20.0, 50.0, 130.0)                     # True / False (or array)
 - **Phase-change point.** Exactly at the boiling point, a temperature-and-
   pressure specification does not determine vapor fraction (the stream sits
   on the saturation line), so the true value is ambiguous. The models
-  handle it with a hard threshold `T_out >= T_sat` (100 °C); only 6 of the 150
-  training points lie in 98–102 °C, the nearest at 99.9 and 100.4 °C, so
+  handle it with a hard threshold `T_out >= T_sat` (100 °C); the extended DoE
+  placed 24 of the 191 training points in 98–102 °C, so
   within a few tenths of a degree of the threshold the result is only as good
   as that convention.
 - **Fixed pressure.** `T_sat = 100 °C` is a constant (the case runs at
@@ -276,8 +281,8 @@ python src/heater_08_compare_models.py     # several minutes (repeated CV with G
 ## Roadmap
 
 - Scale the same pipeline to a more complex unit (FCC).
-- Improve the experimental design (DoE): add points around 100 °C and in the
-  corners of the domain, compare LHS against adaptive sampling (needs HYSYS
-  and changes to `heater_01`).
+- ~~Improve the experimental design (DoE)~~ — done (`heater_09`): 41 targeted
+  points added around 100 °C, domain corners and face centers. MAE improved
+  from 4.6 to 3.9 kJ/h; adaptive sampling remains for future work.
 - Multi-variable optimization (e.g. cost of Q vs throughput) with
   `scipy.optimize.minimize`; the current script solves 1-D problems only.

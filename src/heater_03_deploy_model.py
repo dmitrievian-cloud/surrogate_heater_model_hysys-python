@@ -33,7 +33,7 @@ from surrogate_model import (QuadPolyModel, FEATURE_COLS, TARGET_COL, T_SAT_C,
 # ---------------------------------------------------------------------------
 # НАСТРОЙКИ
 # ---------------------------------------------------------------------------
-IN_XLSX = ROOT / "data" / "phase1_heater_dataset.xlsx"
+IN_XLSX = ROOT / "data" / "combined_heater_dataset.xlsx"
 RANDOM_STATE = 42
 
 # ---------------------------------------------------------------------------
