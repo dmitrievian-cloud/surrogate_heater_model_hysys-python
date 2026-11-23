@@ -22,22 +22,19 @@
 """
 
 import time
+from pathlib import Path
+
 import pandas as pd
-import numpy as np
 import joblib
 
-from sklearn.ensemble import GradientBoostingRegressor
+from surrogate_model import (EnthalpyGP, FEATURE_COLS, TARGET_COL, T_SAT_C,
+                             MODEL_FILE, ROOT, predict_Q)
 
 # ---------------------------------------------------------------------------
 # НАСТРОЙКИ
 # ---------------------------------------------------------------------------
-IN_XLSX = "phase1_dataset.xlsx"
-T_SAT_C = 100.0  # температура кипения воды при рабочем давлении модели (~101 kPa)
-RAW_FEATURE_COLS = ["T_in_C", "Flow_in_kgh", "T_out_target_C"]
-FEATURE_COLS = RAW_FEATURE_COLS + ["Dist_to_boiling_C"]  # + инженерный признак
-TARGET_COL = "Q_kJ_per_h"
+IN_XLSX = ROOT / "data" / "phase1_heater_dataset.xlsx"
 RANDOM_STATE = 42
-MODEL_FILE = "surrogate_heater_model.pkl"
 
 # ---------------------------------------------------------------------------
 # ШАГ 1. Загрузка данных и обучение финальной модели на всём датасете
@@ -47,16 +44,11 @@ df = pd.read_excel(IN_XLSX)
 df = df[df["Error"].isna() | (df["Error"] == "")]
 print(f"  Точек для обучения: {len(df)}")
 
-# тот же инженерный признак, что и в Фазе 2 — обязательно одинаковая логика
-df["Dist_to_boiling_C"] = df["T_out_target_C"] - T_SAT_C
-
 X = df[FEATURE_COLS].values
 y = df[TARGET_COL].values
 
-print("\nОбучаю финальную модель (Gradient Boosting) на всех данных...")
-model = GradientBoostingRegressor(
-    n_estimators=200, max_depth=3, learning_rate=0.1, random_state=RANDOM_STATE
-)
+print("\nОбучаю финальную модель (Enthalpy GP: q = Q/Flow + флаг фазы) на всех данных...")
+model = EnthalpyGP(random_state=RANDOM_STATE)
 model.fit(X, y)
 print("  Готово.")
 
@@ -71,36 +63,16 @@ bundle = {
     "target_col": TARGET_COL,
     "t_sat_c": T_SAT_C,
 }
+MODEL_FILE.parent.mkdir(exist_ok=True)
 joblib.dump(bundle, MODEL_FILE)
 print(f"  Модель сохранена -> {MODEL_FILE}")
 
 
 # ---------------------------------------------------------------------------
-# ШАГ 3. Удобная функция-обёртка для предсказаний
+# ШАГ 3. Демонстрация: несколько примеров + сравнение скорости
 # ---------------------------------------------------------------------------
-def predict_Q(t_in, flow_in, t_out, model_file=MODEL_FILE):
-    """
-    Мгновенное предсказание тепловой нагрузки Q (kJ/h) по входам,
-    БЕЗ обращения к HYSYS.
-
-    t_in     - температура Water In, C
-    flow_in  - массовый расход Water In, kg/h
-    t_out    - целевая температура Water Out, C
-
-    Признак Dist_to_boiling_C считается здесь же — пользователю его
-    указывать не нужно, он выводится из t_out автоматически.
-    """
-    bundle = joblib.load(model_file)
-    mdl = bundle["model"]
-    t_sat = bundle.get("t_sat_c", 100.0)
-    dist_to_boiling = t_out - t_sat
-    x = np.array([[t_in, flow_in, t_out, dist_to_boiling]])
-    return float(mdl.predict(x)[0])
-
-
-# ---------------------------------------------------------------------------
-# ШАГ 4. Демонстрация: несколько примеров + сравнение скорости
-# ---------------------------------------------------------------------------
+# predict_Q(t_in, flow_in, t_out, return_std=False) живёт в surrogate_model.py:
+# мгновенное предсказание Q (kJ/h) БЕЗ обращения к HYSYS (+ std при return_std=True).
 print("\n--- Демонстрация использования суррогата ---")
 examples = [
     (20.0, 50.0, 90.0),
@@ -108,12 +80,14 @@ examples = [
     (15.0, 45.0, 101.0),   # прямо на границе фазового перехода - интересный случай
 ]
 
+predict_Q(*examples[0])   # первый вызов читает файл модели с диска; в замер времени его не берём
+
 for t_in, flow_in, t_out in examples:
     t0 = time.perf_counter()
-    q_pred = predict_Q(t_in, flow_in, t_out)
+    q_pred, q_std = predict_Q(t_in, flow_in, t_out, return_std=True)
     dt_ms = (time.perf_counter() - t0) * 1000
     print(f"  T_in={t_in:5.1f} C, Flow_in={flow_in:5.1f} kg/h, T_out={t_out:6.1f} C "
-          f"->  Q = {q_pred:10.1f} kJ/h   (предсказано за {dt_ms:.2f} мс)")
+          f"->  Q = {q_pred:10.1f} +/- {q_std:6.1f} kJ/h   ({dt_ms:.2f} мс)")
 
 print("\nДля сравнения: один пересчёт в HYSYS через COM занимает обычно")
 print("от десятков до сотен миллисекунд (плюс время на сходимость солвера).")
@@ -121,9 +95,7 @@ print("Суррогат отвечает практически мгновенн
 print("там, где нужны тысячи/миллионы 'что если' сценариев: оптимизация,")
 print("Monte-Carlo анализ рисков, real-time советчики операторам (RTO).")
 
-print(f"\nГотово. Модель сохранена в '{MODEL_FILE}' — в любом другом скрипте")
-print("можно подключить её так:")
-print("  import joblib")
-print(f"  bundle = joblib.load('{MODEL_FILE}')")
-print("  model = bundle['model']")
-print("  q = model.predict([[T_in, Flow_in, T_out]])")
+print(f"\nГотово. Модель сохранена в '{MODEL_FILE.name}' — в любом другом скрипте")
+print("можно подключить её так (из папки src/):")
+print("  from surrogate_model import predict_Q")
+print("  q, std = predict_Q(T_in, Flow_in, T_out, return_std=True)")

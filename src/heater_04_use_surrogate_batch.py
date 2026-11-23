@@ -15,31 +15,13 @@ HYSYS здесь уже НЕ НУЖЕН — всё работает на сох�
 Переключи режим ниже в MODE.
 """
 
-import joblib
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-MODEL_FILE = "surrogate_heater_model.pkl"
-MODE = "BATCH"   # "INTERACTIVE" или "BATCH"
-
-# ---------------------------------------------------------------------------
-# Загрузка модели (один раз)
-# ---------------------------------------------------------------------------
-bundle = joblib.load(MODEL_FILE)
-model = bundle["model"]
-feature_cols = bundle["feature_cols"]  # [..., "Dist_to_boiling_C"]
-t_sat_c = bundle.get("t_sat_c", 100.0)  # температура кипения, учтённая моделью
-
-
-def predict_Q(t_in, flow_in, t_out):
-    # признак "расстояние до кипения" считается автоматически из t_out —
-    # вводить его вручную не нужно
-    dist_to_boiling = t_out - t_sat_c
-    x = np.array([[t_in, flow_in, t_out, dist_to_boiling]])
-    return float(model.predict(x)[0])
-
+from surrogate_model import ROOT, predict_Q   # модель загружается с диска один раз, внутри predict_Q
+MODE = "BATCH"
 
 # ---------------------------------------------------------------------------
 # РЕЖИМ A: интерактивный ввод
@@ -83,7 +65,8 @@ def run_batch():
     plt.grid(alpha=0.3)
     plt.tight_layout()
 
-    out_file = "sensitivity_Q_vs_Tout.png"
+    out_file = ROOT / "figures" / "sensitivity_Q_vs_Tout.png"
+    out_file.parent.mkdir(exist_ok=True)
     plt.savefig(out_file, dpi=150)
     print(f"График сохранён -> {out_file}")
     print(f"\nВсего посчитано точек: {len(t_in_values) * len(t_out_range)}")

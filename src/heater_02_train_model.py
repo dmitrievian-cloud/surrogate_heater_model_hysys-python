@@ -21,17 +21,18 @@
 
 Что делает скрипт:
   1. Читает phase1_dataset.xlsx.
-  2. Добавляет инженерный признак "расстояние до точки кипения" —
-     T_out_target_C минус температура насыщения воды при рабочем давлении
-     (~100 C). Без этого признака модель должна была "угадывать" о фазовом
-     переходе неявно, по редким точкам рядом с разрывом. С этим признаком
-     она явно получает сигнал "насколько близко мы к кипению и с какой
-     стороны", что должно резко снизить ошибку именно в этой зоне.
+  2. Признаки: T_in_C, Flow_in_kgh, T_out_target_C. (Раньше был ещё
+     Dist_to_boiling_C = T_out - 100, но он убран: это тот же T_out, только
+     сдвинутый на константу. Деревья Gradient Boosting режут по порогам и
+     сдвиг не замечают, а у линейной регрессии такой столбец полностью
+     повторяет T_out. Новой информации он не давал; метрики не изменились.)
   3. Прогоняет 5-fold кросс-валидацию для Linear Regression и
      Gradient Boosting, собирая out-of-fold предсказания.
   4. Печатает R^2/MAE по фолдам (среднее ± std).
   5. Строит parity-график на всех точках (честные out-of-fold предсказания).
 """
+
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -43,18 +44,23 @@ from sklearn.model_selection import KFold, cross_val_predict, cross_val_score
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import GradientBoostingRegressor
 from sklearn.metrics import r2_score, mean_absolute_error
+from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import StandardScaler
+from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.gaussian_process.kernels import Matern, WhiteKernel, ConstantKernel
+
+from surrogate_model import EnthalpyGP   # GP по q = Q/Flow + флаг фазы (см. surrogate_model.py)
 
 # ---------------------------------------------------------------------------
 # НАСТРОЙКИ
 # ---------------------------------------------------------------------------
-IN_XLSX = "phase1_dataset.xlsx"
-T_SAT_C = 100.0  # температура кипения воды при рабочем давлении модели (~101 kPa)
-RAW_FEATURE_COLS = ["T_in_C", "Flow_in_kgh", "T_out_target_C"]
-FEATURE_COLS = RAW_FEATURE_COLS + ["Dist_to_boiling_C"]  # + инженерный признак
+ROOT = Path(__file__).resolve().parent.parent   # корень репозитория (src/ лежит на уровень ниже)
+IN_XLSX = ROOT / "data" / "phase1_heater_dataset.xlsx"
+FEATURE_COLS = ["T_in_C", "Flow_in_kgh", "T_out_target_C"]
 TARGET_COL = "Q_kJ_per_h"
 N_FOLDS = 5
 RANDOM_STATE = 42
-OUT_PLOT = "phase2_parity_plot.png"
+OUT_PLOT = ROOT / "figures" / "phase2_parity_plot.png"
 
 # ---------------------------------------------------------------------------
 # ШАГ 1. Загрузка и очистка данных
@@ -66,12 +72,6 @@ n_total = len(df)
 df = df[df["Error"].isna() | (df["Error"] == "")]
 n_clean = len(df)
 print(f"  Всего точек: {n_total}, годных (без ошибок): {n_clean}")
-
-# инженерный признак: знаковое расстояние до точки кипения.
-# Отрицательное значение -> ещё жидкость (не дошли до кипения).
-# Положительное значение -> уже за точкой кипения (пар/перегретый пар).
-df["Dist_to_boiling_C"] = df["T_out_target_C"] - T_SAT_C
-print(f"  Добавлен признак Dist_to_boiling_C (T_out_target_C - {T_SAT_C})")
 
 X = df[FEATURE_COLS].values
 y = df[TARGET_COL].values
@@ -86,6 +86,18 @@ models = {
     "Gradient Boosting": GradientBoostingRegressor(
         n_estimators=200, max_depth=3, learning_rate=0.1, random_state=RANDOM_STATE
     ),
+    # GP: отдельный масштаб длины по каждому признаку (ARD), шум подбирается сам.
+    # Даёт не только предсказание, но и std (см. predict(..., return_std=True)).
+    "Gaussian Process": make_pipeline(
+        StandardScaler(),
+        GaussianProcessRegressor(
+            kernel=ConstantKernel(1.0) * Matern(length_scale=[1.0] * len(FEATURE_COLS), nu=2.5)
+                   + WhiteKernel(1e-3),
+            normalize_y=True, n_restarts_optimizer=5, random_state=RANDOM_STATE,
+        ),
+    ),
+    # GP на удельной величине q = Q/Flow + флаг фазы: скачок при кипении уходит в флаг
+    "Enthalpy GP": EnthalpyGP(random_state=RANDOM_STATE),
 }
 
 results = {}
@@ -120,9 +132,9 @@ for name, model in models.items():
 # ---------------------------------------------------------------------------
 # ШАГ 3. Parity plot на всех точках (out-of-fold)
 # ---------------------------------------------------------------------------
-fig, axes = plt.subplots(1, 2, figsize=(12, 5.5))
+fig, axes = plt.subplots(2, 2, figsize=(12, 11))
 
-for ax, (name, res) in zip(axes, results.items()):
+for ax, (name, res) in zip(axes.ravel(), results.items()):
     y_pred = res["y_pred_oof"]
     ax.scatter(y, y_pred, alpha=0.6, edgecolor="k", s=30)
     lims = [min(y.min(), y_pred.min()), max(y.max(), y_pred.max())]
@@ -135,6 +147,7 @@ for ax, (name, res) in zip(axes, results.items()):
     ax.grid(alpha=0.3)
 
 plt.tight_layout()
+OUT_PLOT.parent.mkdir(exist_ok=True)
 plt.savefig(OUT_PLOT, dpi=150)
 print(f"\nГрафик сохранён -> {OUT_PLOT}")
 

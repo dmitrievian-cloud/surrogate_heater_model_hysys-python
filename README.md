@@ -28,12 +28,16 @@ drives via COM automation.
    Flow_in, T_out) using Latin Hypercube Sampling (DoE), and records the
    simulator's response. Output: `data/phase1_heater_dataset.xlsx`.
 2. **`src/heater_02_train_model.py`** — trains and compares Linear
-   Regression and Gradient Boosting, evaluated with 5-fold cross-validation
-   (out-of-fold predictions, not a single train/test split). Includes an
-   engineered `Dist_to_boiling_C` feature to help the model separate the
-   liquid and vapor regimes around the phase-change point.
-3. **`src/heater_03_deploy_model.py`** — trains the final model on the
-   full dataset and saves it to `models/surrogate_heater_model.pkl`.
+   Regression, Gradient Boosting, a plain Gaussian Process and the
+   Enthalpy GP (below), evaluated with 5-fold cross-validation
+   (out-of-fold predictions, not a single train/test split). An earlier
+   `Dist_to_boiling_C = T_out - 100` feature was removed: it is `T_out`
+   shifted by a constant, so it carries no new information (trees ignore the
+   shift, and for linear regression it is a duplicate column).
+3. **`src/heater_03_deploy_model.py`** — trains the final model (Enthalpy
+   GP) on the full dataset and saves it to `models/surrogate_heater_model.pkl`.
+   The model class and `predict_Q(T_in, Flow_in, T_out, return_std=False)`
+   live in `src/surrogate_model.py`, shared by scripts 02–05.
 4. **`src/heater_04_use_surrogate_batch.py`** — batch what-if / sensitivity
    analysis using the saved model (e.g. Q vs T_out across several T_in
    values), no HYSYS required.
@@ -47,25 +51,49 @@ drives via COM automation.
 |---|---|---|
 | Linear Regression | 0.71 | ~30,100 |
 | Gradient Boosting  | 0.95 | ~3,600 |
+| Gaussian Process (Matern 5/2, ARD) | 0.99 | ~2,700 |
+| **Enthalpy GP** (deployed) | 1.00 | ~5 |
+
+**Why a plain GP is not enough.** It is more accurate than Gradient
+Boosting and its predictive std flags extrapolation, but it does **not**
+flag the boiling-point step: in CV its std is nearly flat across T_out
+(~5,000 kJ/h) while the real error at T_out 98–102 °C is ~22,000 kJ/h
+(correlation of std and error: 0.07). A stationary kernel cannot represent
+a step.
+
+**Enthalpy GP.** Since Q = m·(h_out − h_in), the specific heat duty
+q = Q / Flow depends only on the temperatures (checked on the data: the
+flow coefficient is ≈ 0, and dq/dT_out ≈ 4.2 kJ/kg/K in the liquid, i.e.
+cp of water). The GP is therefore trained on q with features
+`[T_in, T_out, is_vapor]`, where `is_vapor = T_out >= 100 °C`; the latent
+heat jump lives entirely in that flag, and the smooth part is left to the
+GP. Result: R² = 1.0000, MAE ≈ 5 kJ/h in 5-fold CV, with similar error in
+every T_out band including 98–102 °C. The predictive std (~200 kJ/h) is
+conservative (real errors are ~5 kJ/h) but uniform and no longer misleading;
+it still grows when extrapolating (e.g. ~1,600 kJ/h at T_out = 300 °C).
+This is not the removed `Dist_to_boiling_C`: a step flag carries information
+a constant shift does not.
 
 ![Parity plot](figures/phase2_parity_plot.png)
 ![Sensitivity analysis](figures/sensitivity_Q_vs_Tout.png)
 
 ## Known limitations
 
-- **Phase-change discontinuity.** Near the water's boiling point, a
-  temperature-and-pressure specification no longer uniquely determines
-  vapor fraction (the stream sits on the saturation line). The underlying
-  relationship has a genuine step discontinuity there, which no regression
-  model can represent exactly at that single point. The `Dist_to_boiling_C`
-  feature helps the model separate the two regimes nearby, but predictions
-  queried exactly at the boiling point should not be trusted.
-- **No extrapolation beyond the training domain.** The model was trained
-  on inputs within specific ranges (e.g. mass flow 30–80 kg/h, later
-  widened to 150 LHS points). Tree-based models like Gradient Boosting
-  cannot extrapolate past the ranges they were trained on — queries outside
-  that domain silently degrade in accuracy. Always check inputs against the
-  ranges used in `heater_01_generate_dataset.py`.
+- **Phase-change point.** Exactly at the boiling point, a temperature-and-
+  pressure specification does not determine vapor fraction (the stream sits
+  on the saturation line), so the true value is ambiguous. The Enthalpy GP
+  handles it with a hard threshold `T_out >= T_sat` (100 °C); the nearest
+  training points are at 99.9 and 100.4 °C, so within a few tenths of a
+  degree of the threshold the result is only as good as that convention.
+- **Fixed pressure.** `T_sat = 100 °C` is a constant (the case runs at
+  ~101 kPa). A different pressure needs a new T_sat and regenerated data.
+- **Limited extrapolation.** The model was trained on T_in ≈ 10–40 °C,
+  T_out ≈ 60–160 °C, flow ≈ 30–80 kg/h (150 LHS points). Outside that domain
+  the GP std grows, but the mean reverts toward the prior and loses accuracy;
+  check `return_std` or the ranges in `heater_01_generate_dataset.py`.
+- **Heater-specific trick.** Dividing by flow and the phase flag use known
+  physics of this unit; the same recipe for an FCC would need its own
+  physics-informed target and features.
 
 ## How to run
 
@@ -85,8 +113,7 @@ python src/heater_05_use_surrogate_interactive.py
 ## Roadmap
 
 - Scale the same pipeline to a more complex unit (FCC).
-- Replace Gradient Boosting with Gaussian Process Regression to get
-  uncertainty estimates alongside predictions (flagging low-confidence
-  regions, such as near the phase-change boundary, automatically).
+- Use the GP's predictive std in the batch plot (confidence band) and as an
+  automatic "out of domain" warning in `predict_Q`.
 - Wrap the surrogate in an optimization loop (e.g. `scipy.optimize`) for
   real what-if decision support.
