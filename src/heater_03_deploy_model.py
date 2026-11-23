@@ -24,8 +24,10 @@
 import time
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import joblib
+from sklearn.model_selection import KFold
 
 from surrogate_model import (EnthalpyGP, FEATURE_COLS, TARGET_COL, T_SAT_C,
                              MODEL_FILE, ROOT, predict_Q)
@@ -52,6 +54,15 @@ model = EnthalpyGP(random_state=RANDOM_STATE)
 model.fit(X, y)
 print("  Готово.")
 
+# Порог доверия по неопределённости: 5-fold out-of-fold sigma/Flow на обучающих данных.
+# Точка считается "доверенной", если sigma/Flow не выше 1.25 x максимума из этих значений.
+sd_q = np.zeros(len(y))
+for tr, te in KFold(5, shuffle=True, random_state=RANDOM_STATE).split(X):
+    _, s = EnthalpyGP(random_state=RANDOM_STATE).fit(X[tr], y[tr]).predict(X[te], return_std=True)
+    sd_q[te] = s / X[te, 1]
+sigma_q_trust = 1.25 * float(sd_q.max())
+print(f"  Порог доверия sigma/Flow: {sigma_q_trust:.3f} kJ/kg (макс. OOF {sd_q.max():.3f})")
+
 # ---------------------------------------------------------------------------
 # ШАГ 2. Сохранение модели на диск
 # ---------------------------------------------------------------------------
@@ -62,6 +73,7 @@ bundle = {
     "feature_cols": FEATURE_COLS,
     "target_col": TARGET_COL,
     "t_sat_c": T_SAT_C,
+    "sigma_q_trust": sigma_q_trust,
     # диапазоны обучения: по ним predict_Q предупреждает о выходе за домен
     "domain": {c: (float(df[c].min()), float(df[c].max())) for c in FEATURE_COLS},
 }

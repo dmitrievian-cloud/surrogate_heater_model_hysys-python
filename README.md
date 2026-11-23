@@ -52,6 +52,19 @@ drives via COM automation.
 
 7. **`src/heater_07_extrapolation.py`** — trains on part of each input range
    and tests on the rest, for 7 models on equal footing (see Results).
+8. **`src/heater_08_compare_models.py`** — 10 × repeated 5-fold CV with
+   boxplots for six approaches (including a hybrid: physical linear model +
+   GP on its residuals) and the uncertainty plot. `--plots-only` redraws
+   only the uncertainty plot.
+
+Besides `predict_Q`, `surrogate_model.py` provides
+`predict_interval(…, k=2)` (mean ∓ kσ band, use the upper bound for
+"not more than" constraints) and `is_trusted(…)`: true only if the input is
+inside the training ranges **and** σ/Flow is below a threshold set at
+training time (1.25 × the largest out-of-fold σ/Flow). On this dataset the
+σ criterion adds little beyond the range check (σ is nearly flat inside the
+box), but it also catches sparse regions of a denser or higher-dimensional
+dataset.
 
 `predict_Q` accepts scalars or numpy arrays (vectorized: 5,000 points in
 ~30 ms) and warns (`RuntimeWarning`) when an input is outside the training
@@ -121,6 +134,44 @@ Findings:
   noise-free simulator output; the ranking may not carry over to the FCC.
 
 ![Extrapolation test](figures/extrapolation_test.png)
+
+### Repeated CV and the hybrid (`heater_08_compare_models.py`)
+
+Median out-of-fold MAE over 10 repeats of 5-fold CV (min–max in brackets):
+
+| Model | MAE, kJ/h | R² |
+|---|---|---|
+| Boosting (raw Q) | 3,600 (2,460–4,270) | 0.944 |
+| GP (raw Q) | 2,850 (2,650–3,400) | 0.987 |
+| Boosting (q + phys) | 1,730 (1,040–2,020) | 0.967 |
+| Physical linear (q + phys) | 6.6 (6.5–6.7) | 1.0000 |
+| **Enthalpy GP** | **5.1 (5.0–5.2)** | 1.0000 |
+| Hybrid: linear + GP(resid) | 6.2 (5.9–6.4) | 1.0000 |
+
+![Model comparison](figures/model_comparison_boxplot.png)
+
+- The three physical models are statistically indistinguishable in
+  practice (5–7 kJ/h, spread between repeats < 0.5 kJ/h) and 2–3 orders of
+  magnitude ahead of everything on raw Q. The GP is marginally best, the
+  hybrid does not beat it: the physical linear part already explains
+  almost everything, so there is little left for the residual GP.
+- Boosting with physics is still ~1,700 kJ/h with a wide spread: trees
+  cannot represent the near-linear dependence on T_out and T_in precisely.
+
+![Uncertainty](figures/uncertainty_band.png)
+
+What the uncertainty plot shows (σ at Flow = 55, T_in = 25):
+- **GP on raw Q** cannot represent the step: it draws a smooth sigmoid across
+  97.5–102 °C, and outside the training range its mean reverts to the prior
+  with a huge σ (the "reversion" behavior).
+- **Enthalpy GP**: 2σ ≈ 420 kJ/h, almost flat inside the box (so a flat σ
+  does not by itself mark regions of higher error), growing only far outside
+  (σ ≈ 520 kJ/h at 220 °C, 1,750 kJ/h at 300 °C). It is ~70× larger than the
+  real error (~6 kJ/h): safe, but pessimistic.
+- **Hybrid**: 2σ ≈ 5–20 kJ/h, close to the real error, but it barely grows
+  outside the box, because the residual GP reverts to zero while the linear
+  part keeps extrapolating. Better calibrated inside, not an extrapolation
+  detector. Use the range check (`is_trusted`) with it.
 
 ![Parity plot](figures/phase2_parity_plot.png)
 ![Sensitivity analysis](figures/sensitivity_Q_vs_Tout.png)

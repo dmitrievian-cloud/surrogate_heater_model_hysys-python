@@ -89,7 +89,7 @@ def get_domain():
     return _BUNDLE.get("domain")
 
 
-def check_domain(t_in, flow_in, t_out):
+def check_domain(t_in, flow_in, t_out, warn=True):
     """Проверка входов (числа или массивы) на попадание в диапазон обучения.
 
     Возвращает булев массив «точка в домене»; по каждому признаку с нарушениями
@@ -104,6 +104,8 @@ def check_domain(t_in, flow_in, t_out):
         bad = (vals < lo) | (vals > hi)
         if bad.any():
             ok &= ~bad
+            if not warn:
+                continue
             far = vals[bad][np.argmax(np.abs(vals[bad] - np.clip(vals[bad], lo, hi)))]
             warnings.warn(f"{name}: {int(bad.sum())} знач. вне диапазона обучения [{lo:g}, {hi:g}] "
                           f"(крайнее: {far:g}) — предсказание ненадёжно", RuntimeWarning, stacklevel=3)
@@ -126,3 +128,25 @@ def predict_Q(t_in, flow_in, t_out, return_std=False):
         return (float(mu), float(sd)) if a.ndim == 0 else (mu, sd)
     mu = model.predict(x).reshape(a.shape)
     return float(mu) if a.ndim == 0 else mu
+
+
+def predict_interval(t_in, flow_in, t_out, k=2.0):
+    """Консервативный коридор (mean - k*sigma, mean + k*sigma) для Q, kJ/h.
+
+    Для ограничений "не больше" берите верхнюю границу, для "не меньше" — нижнюю."""
+    mu, sd = predict_Q(t_in, flow_in, t_out, return_std=True)
+    return mu - k * sd, mu + k * sd
+
+
+def is_trusted(t_in, flow_in, t_out):
+    """Флаг доверия (булев, числа или массив): вход внутри диапазона обучения И
+    удельная неопределённость sigma/Flow не выше порога, посчитанного при обучении
+    (1.25 x максимум out-of-fold sigma/Flow, см. heater_03). Без предупреждений."""
+    model = load_model()
+    ok = check_domain(t_in, flow_in, t_out, warn=False)
+    thr = _BUNDLE.get("sigma_q_trust")
+    a, b, c = np.broadcast_arrays(*(np.asarray(v, dtype=float) for v in (t_in, flow_in, t_out)))
+    if thr is not None:
+        _, sd = model.predict(np.column_stack([a.ravel(), b.ravel(), c.ravel()]), return_std=True)
+        ok = ok & (sd.reshape(a.shape) / b <= thr)
+    return bool(ok) if a.ndim == 0 else ok
